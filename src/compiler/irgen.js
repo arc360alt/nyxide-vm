@@ -388,6 +388,8 @@ class ScriptTreeGenerator {
             }
             return result;
         }
+        case 'operator_newline':
+            return this.createConstantInput('\n');
         case 'operator_length':
             return new IntermediateInput(InputOpcode.OP_LENGTH, InputType.NUMBER_POS_INT | InputType.NUMBER_ZERO, {
                 string: this.descendInputOfBlock(block, 'STRING').toType(InputType.STRING)
