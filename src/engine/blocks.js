@@ -187,7 +187,10 @@ class Blocks {
     /**
      * Get the branch for a particular C-shaped block.
      * @param {?string} id ID for block to get the branch for.
-     * @param {?number} branchNum Which branch to select (e.g. for if-else).
+     * @param {?(number|string)} branchNum Which branch to select (e.g. for if-else). A number
+     * selects the Nth generically-named branch input (SUBSTACK, SUBSTACK2, ...). A string is
+     * used directly as the input name, for blocks whose extra branches are not named using the
+     * generic SUBSTACK-number scheme (e.g. control_if's ELSEIF_SUBSTACK1).
      * @return {?string} ID of block in the branch.
      */
     getBranch (id, branchNum) {
@@ -195,14 +198,31 @@ class Blocks {
         if (typeof block === 'undefined') return null;
         if (!branchNum) branchNum = 1;
 
-        let inputName = Blocks.BRANCH_INPUT_PREFIX;
-        if (branchNum > 1) {
-            inputName += branchNum;
+        let inputName;
+        if (typeof branchNum === 'string') {
+            inputName = branchNum;
+        } else {
+            inputName = Blocks.BRANCH_INPUT_PREFIX;
+            if (branchNum > 1) {
+                inputName += branchNum;
+            }
         }
 
         // Empty C-block?
         const input = block.inputs[inputName];
         return (typeof input === 'undefined') ? null : input.block;
+    }
+
+    /**
+     * Is the given input name a statement/branch input rather than a value input?
+     * Branch inputs are excluded from the generic value-input machinery (they are not
+     * evaluated as reporters; they are stepped into via getBranch/startBranch instead).
+     * @param {string} name The input name to check.
+     * @return {boolean} True if this is a branch input.
+     */
+    static isBranchInputName (name) {
+        return name.substring(0, Blocks.BRANCH_INPUT_PREFIX.length) === Blocks.BRANCH_INPUT_PREFIX ||
+            name.substring(0, 'ELSEIF_SUBSTACK'.length) === 'ELSEIF_SUBSTACK';
     }
 
     /**
@@ -237,9 +257,9 @@ class Blocks {
 
         inputs = {};
         for (const input in block.inputs) {
-            // Ignore blocks prefixed with branch prefix.
-            if (input.substring(0, Blocks.BRANCH_INPUT_PREFIX.length) !==
-                Blocks.BRANCH_INPUT_PREFIX) {
+            // Ignore branch (statement) inputs; they are stepped into directly rather than
+            // evaluated as reporter values.
+            if (!Blocks.isBranchInputName(input)) {
                 inputs[input] = block.inputs[input];
             }
         }
@@ -719,6 +739,9 @@ class Blocks {
             break;
         case 'mutation':
             block.mutation = mutationAdapter(args.value);
+            // tw: mutation can change the shape of a block's inputs (e.g. control_if elseif/else
+            // branches), which invalidates any cached execution/compilation info for it.
+            this.resetCache();
             break;
         case 'checkbox': {
             // A checkbox usually has a one to one correspondence with the monitor

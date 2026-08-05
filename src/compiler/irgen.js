@@ -173,6 +173,39 @@ class ScriptTreeGenerator {
     }
 
     /**
+     * Read the "items" mutation attribute added to operator_join/operator_and/operator_or to
+     * grow past their original 2 numbered inputs.
+     * @param {*} block The block to read the mutation of.
+     * @private
+     * @returns {number} Number of numbered inputs this block has (STRING1.., OPERAND1..).
+     */
+    readItemCountMutation (block) {
+        const mutation = block.mutation;
+        if (mutation && mutation.items) {
+            const n = parseInt(mutation.items, 10);
+            if (!isNaN(n) && n >= 2) return n;
+        }
+        return 2;
+    }
+
+    /**
+     * Read the elseif/else mutation attributes added to control_if/control_if_else.
+     * @param {*} block The block to read the mutation of.
+     * @private
+     * @returns {{elseIfCount: number, hasElse: boolean}} Parsed shape of this if block.
+     */
+    readIfMutation (block) {
+        const mutation = block.mutation;
+        const elseIfCount = (mutation && mutation.elseif) ? (parseInt(mutation.elseif, 10) || 0) : 0;
+        const hasElse = (mutation && typeof mutation.else !== 'undefined') ?
+            (mutation.else === '1' || mutation.else === 1 || mutation.else === true) :
+            // Absent mutation means the block's original shape: control_if never had an else,
+            // control_if_else always did.
+            block.opcode === 'control_if_else';
+        return {elseIfCount, hasElse};
+    }
+
+    /**
      * Descend into a child input of a block. (eg. the input STRING of "length of ( )")
      * @param {*} parentBlock The parent Scratch block that contains the input.
      * @param {string} inputName The name of the input to descend into.
@@ -313,11 +346,17 @@ class ScriptTreeGenerator {
                 left: this.descendInputOfBlock(block, 'NUM1').toType(InputType.NUMBER),
                 right: this.descendInputOfBlock(block, 'NUM2').toType(InputType.NUMBER)
             });
-        case 'operator_and':
-            return new IntermediateInput(InputOpcode.OP_AND, InputType.BOOLEAN, {
-                left: this.descendInputOfBlock(block, 'OPERAND1').toType(InputType.BOOLEAN),
-                right: this.descendInputOfBlock(block, 'OPERAND2').toType(InputType.BOOLEAN)
-            });
+        case 'operator_and': {
+            const itemCount = this.readItemCountMutation(block);
+            let result = this.descendInputOfBlock(block, 'OPERAND1').toType(InputType.BOOLEAN);
+            for (let i = 2; i <= itemCount; i++) {
+                result = new IntermediateInput(InputOpcode.OP_AND, InputType.BOOLEAN, {
+                    left: result,
+                    right: this.descendInputOfBlock(block, `OPERAND${i}`).toType(InputType.BOOLEAN)
+                });
+            }
+            return result;
+        }
         case 'operator_contains':
             return new IntermediateInput(InputOpcode.OP_CONTAINS, InputType.BOOLEAN, {
                 string: this.descendInputOfBlock(block, 'STRING1').toType(InputType.STRING),
@@ -338,11 +377,17 @@ class ScriptTreeGenerator {
                 left: this.descendInputOfBlock(block, 'OPERAND1'),
                 right: this.descendInputOfBlock(block, 'OPERAND2')
             });
-        case 'operator_join':
-            return new IntermediateInput(InputOpcode.OP_JOIN, InputType.STRING, {
-                left: this.descendInputOfBlock(block, 'STRING1').toType(InputType.STRING),
-                right: this.descendInputOfBlock(block, 'STRING2').toType(InputType.STRING)
-            });
+        case 'operator_join': {
+            const itemCount = this.readItemCountMutation(block);
+            let result = this.descendInputOfBlock(block, 'STRING1').toType(InputType.STRING);
+            for (let i = 2; i <= itemCount; i++) {
+                result = new IntermediateInput(InputOpcode.OP_JOIN, InputType.STRING, {
+                    left: result,
+                    right: this.descendInputOfBlock(block, `STRING${i}`).toType(InputType.STRING)
+                });
+            }
+            return result;
+        }
         case 'operator_length':
             return new IntermediateInput(InputOpcode.OP_LENGTH, InputType.NUMBER_POS_INT | InputType.NUMBER_ZERO, {
                 string: this.descendInputOfBlock(block, 'STRING').toType(InputType.STRING)
@@ -392,11 +437,17 @@ class ScriptTreeGenerator {
             return new IntermediateInput(InputOpcode.OP_NOT, InputType.BOOLEAN, {
                 operand: this.descendInputOfBlock(block, 'OPERAND').toType(InputType.BOOLEAN)
             });
-        case 'operator_or':
-            return new IntermediateInput(InputOpcode.OP_OR, InputType.BOOLEAN, {
-                left: this.descendInputOfBlock(block, 'OPERAND1').toType(InputType.BOOLEAN),
-                right: this.descendInputOfBlock(block, 'OPERAND2').toType(InputType.BOOLEAN)
-            });
+        case 'operator_or': {
+            const itemCount = this.readItemCountMutation(block);
+            let result = this.descendInputOfBlock(block, 'OPERAND1').toType(InputType.BOOLEAN);
+            for (let i = 2; i <= itemCount; i++) {
+                result = new IntermediateInput(InputOpcode.OP_OR, InputType.BOOLEAN, {
+                    left: result,
+                    right: this.descendInputOfBlock(block, `OPERAND${i}`).toType(InputType.BOOLEAN)
+                });
+            }
+            return result;
+        }
         case 'operator_random': {
             const from = this.descendInputOfBlock(block, 'FROM');
             const to = this.descendInputOfBlock(block, 'TO');
@@ -642,17 +693,28 @@ class ScriptTreeGenerator {
                 do: this.descendSubstack(block, 'SUBSTACK')
             }, this.analyzeLoop());
         case 'control_if':
+        case 'control_if_else': {
+            const {elseIfCount, hasElse} = this.readIfMutation(block);
+
+            // Build the elseif/else chain innermost-first, nesting each earlier branch's
+            // "whenFalse" around the ones that follow it.
+            let whenFalse = hasElse ? this.descendSubstack(block, 'SUBSTACK2') : new IntermediateStack();
+            for (let i = elseIfCount; i >= 1; i--) {
+                whenFalse = new IntermediateStack([
+                    new IntermediateStackBlock(StackOpcode.CONTROL_IF_ELSE, {
+                        condition: this.descendInputOfBlock(block, `ELSEIF_CONDITION${i}`).toType(InputType.BOOLEAN),
+                        whenTrue: this.descendSubstack(block, `ELSEIF_SUBSTACK${i}`),
+                        whenFalse
+                    })
+                ]);
+            }
+
             return new IntermediateStackBlock(StackOpcode.CONTROL_IF_ELSE, {
                 condition: this.descendInputOfBlock(block, 'CONDITION').toType(InputType.BOOLEAN),
                 whenTrue: this.descendSubstack(block, 'SUBSTACK'),
-                whenFalse: new IntermediateStack()
+                whenFalse
             });
-        case 'control_if_else':
-            return new IntermediateStackBlock(StackOpcode.CONTROL_IF_ELSE, {
-                condition: this.descendInputOfBlock(block, 'CONDITION').toType(InputType.BOOLEAN),
-                whenTrue: this.descendSubstack(block, 'SUBSTACK'),
-                whenFalse: this.descendSubstack(block, 'SUBSTACK2')
-            });
+        }
         case 'control_repeat':
             return new IntermediateStackBlock(StackOpcode.CONTROL_REPEAT, {
                 times: this.descendInputOfBlock(block, 'TIMES').toType(InputType.NUMBER),

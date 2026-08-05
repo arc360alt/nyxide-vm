@@ -121,20 +121,44 @@ class Scratch3ControlBlocks {
         }
     }
 
-    if (args, util) {
-        const condition = Cast.toBoolean(args.CONDITION);
-        if (condition) {
+    /**
+     * Shared implementation for control_if and control_if_else, including their optional
+     * "else if" / "else" branches added via mutation (elseif="N", else="0|1").
+     * @param {object} args Block arguments.
+     * @param {object} util Block utility.
+     * @param {boolean} defaultHasElse Whether this block has an else branch when no mutation
+     * is present (true for control_if_else's original shape, false for control_if's).
+     */
+    _stepIfElse (args, util, defaultHasElse) {
+        const mutation = args.mutation;
+        const elseIfCount = (mutation && mutation.elseif) ? (parseInt(mutation.elseif, 10) || 0) : 0;
+        const hasElse = (mutation && typeof mutation.else !== 'undefined') ?
+            (mutation.else === '1' || mutation.else === 1 || mutation.else === true) :
+            defaultHasElse;
+
+        if (Cast.toBoolean(args.CONDITION)) {
             util.startBranch(1, false);
+            return;
+        }
+
+        for (let i = 1; i <= elseIfCount; i++) {
+            if (Cast.toBoolean(args[`ELSEIF_CONDITION${i}`])) {
+                util.startBranch(`ELSEIF_SUBSTACK${i}`, false);
+                return;
+            }
+        }
+
+        if (hasElse) {
+            util.startBranch(2, false);
         }
     }
 
+    if (args, util) {
+        this._stepIfElse(args, util, false);
+    }
+
     ifElse (args, util) {
-        const condition = Cast.toBoolean(args.CONDITION);
-        if (condition) {
-            util.startBranch(1, false);
-        } else {
-            util.startBranch(2, false);
-        }
+        this._stepIfElse(args, util, true);
     }
 
     stop (args, util) {

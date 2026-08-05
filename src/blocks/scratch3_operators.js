@@ -65,12 +65,34 @@ class Scratch3OperatorsBlocks {
         return Cast.compare(args.OPERAND1, args.OPERAND2) > 0;
     }
 
+    /**
+     * Read the "items" mutation attribute added to operator_join/operator_and/operator_or to
+     * grow past their original 2 inputs.
+     * @param {?object} mutation Block mutation, if any.
+     * @return {number} Number of numbered inputs this block has (STRING1.., OPERAND1..).
+     */
+    _getItemCount (mutation) {
+        if (mutation && mutation.items) {
+            const n = parseInt(mutation.items, 10);
+            if (!isNaN(n) && n >= 2) return n;
+        }
+        return 2;
+    }
+
     and (args) {
-        return Cast.toBoolean(args.OPERAND1) && Cast.toBoolean(args.OPERAND2);
+        const count = this._getItemCount(args.mutation);
+        for (let i = 1; i <= count; i++) {
+            if (!Cast.toBoolean(args[`OPERAND${i}`])) return false;
+        }
+        return true;
     }
 
     or (args) {
-        return Cast.toBoolean(args.OPERAND1) || Cast.toBoolean(args.OPERAND2);
+        const count = this._getItemCount(args.mutation);
+        for (let i = 1; i <= count; i++) {
+            if (Cast.toBoolean(args[`OPERAND${i}`])) return true;
+        }
+        return false;
     }
 
     not (args) {
@@ -94,7 +116,12 @@ class Scratch3OperatorsBlocks {
     }
 
     join (args) {
-        return Cast.toString(args.STRING1) + Cast.toString(args.STRING2);
+        const count = this._getItemCount(args.mutation);
+        let result = '';
+        for (let i = 1; i <= count; i++) {
+            result += Cast.toString(args[`STRING${i}`]);
+        }
+        return result;
     }
 
     letterOf (args) {
